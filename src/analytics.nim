@@ -1,8 +1,12 @@
 # Copyright (C) Dominik Picheta. All rights reserved.
 # MIT License. Look at license.txt for more info.
-import httpclient, asyncdispatch, uri, cgi
+import httpclient, asyncdispatch, uri, cgi, strutils
 
 import uuids
+when defined(windows):
+  import osinfo/win
+else:
+  import osinfo/posix
 
 # Reference: https://goo.gl/BT32cg
 type
@@ -13,9 +17,25 @@ type
     an: string ## Application name
     av: string ## Application version
 
-proc newAnalytics*(trackingID, clientID, appName, appVer: string): Analytics =
-  Analytics(
-    client: newHttpClient(),
+proc newAnalytics*(trackingID, clientID, appName, appVer: string,
+                   userAgent = ""): Analytics =
+  ## Creates a new analytics reporting object.
+  ##
+  ## When `userAgent` is empty, one is created based on the current OS info.
+  var ua = userAgent
+  if ua.len == 0:
+    # We gather some OS stats here to include in the user agent.
+    when defined(windows):
+      let systemVersion = $getVersionInfo()
+    else:
+      let systemVersion = getSystemVersion()
+
+    ua = "$1/$2 ($3) (Built with Nim v$4)" % [
+      appName, appVer, systemVersion, NimVersion
+    ]
+
+  result = Analytics(
+    client: newHttpClient(userAgent = ua),
     tid: trackingID,
     cid: clientID,
     an: appName,
@@ -25,21 +45,6 @@ proc newAnalytics*(trackingID, clientID, appName, appVer: string): Analytics =
 proc reportEvent*(this: Analytics, category, action, label,
                   value: string) =
   var uri = parseUri("https://www.google-analytics.com/collect")
-
-  # var data = newMultipartData()
-  # data["v"] = "1"
-  # data["aip"] = "1"
-  # data["t"] = "event"
-
-  # data["tid"] = this.tid
-  # data["cid"] = this.cid
-  # data["an"] = this.an
-  # data["av"] = this.av
-
-  # data["ec"] = category
-  # data["ea"] = action
-  # data["el"] = label
-  # data["ev"] = value
 
   if category.len == 0:
     raise newException(ValueError, "Category cannot be empty.")
@@ -60,7 +65,7 @@ proc reportEvent*(this: Analytics, category, action, label,
   if value.len > 0:
     payload.add("&ev=" & encodeUrl(value))
 
-  echo this.client.postContent($uri, body=payload)
+  discard this.client.postContent($uri, body=payload)
 
 proc genClientID*(): string =
   return $genUUID()
