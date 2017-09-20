@@ -1,6 +1,6 @@
 # Copyright (C) Dominik Picheta. All rights reserved.
 # MIT License. Look at license.txt for more info.
-import httpclient, asyncdispatch, uri, cgi, strutils
+import httpclient, asyncdispatch, uri, cgi, strutils, options
 
 import uuids
 when defined(windows):
@@ -42,8 +42,8 @@ proc newAnalytics*(trackingID, clientID, appName, appVer: string,
     av: appVer
   )
 
-proc reportEvent*(this: Analytics, category, action, label,
-                  value: string) =
+proc reportEvent*(this: Analytics, category, action, label: string = "",
+                  value: Option[int] = none(int)) =
   var uri = parseUri("https://www.google-analytics.com/collect")
 
   if category.len == 0:
@@ -62,8 +62,8 @@ proc reportEvent*(this: Analytics, category, action, label,
   payload.add("&ea=" & encodeUrl(action))
   if label.len > 0:
     payload.add("&el=" & encodeUrl(label))
-  if value.len > 0:
-    payload.add("&ev=" & encodeUrl(value))
+  if value.isSome:
+    payload.add("&ev=" & $value.get())
 
   discard this.client.postContent($uri, body=payload)
 
@@ -74,4 +74,4 @@ when isMainModule:
   let tid = "UA-105812497-2"
   let cid = genClientID()
   let analytics = newAnalytics(tid, cid, "AnalyticsTester", "0.1")
-  analytics.reportEvent("AnalyticsTest", "nim c analytics", "", "")
+  analytics.reportEvent("AnalyticsTest", "nim c analytics")
