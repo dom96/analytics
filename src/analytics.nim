@@ -45,8 +45,8 @@ proc newAnalytics*(trackingID, clientID, appName, appVer: string,
     av: appVer
   )
 
-proc createCommonPayload(this: Analytics): string =
-  var payload = "v=1&aip=1&t=event"
+proc createCommonPayload(this: Analytics, hitType: string): string =
+  var payload = "v=1&aip=1&t=" & hitType
   payload.add("&tid=" & encodeUrl(this.tid))
   payload.add("&cid=" & encodeUrl(this.cid))
   payload.add("&an=" & encodeUrl(this.an))
@@ -62,7 +62,7 @@ proc reportEvent*(this: Analytics, category, action, label: string = "",
   if action.len == 0:
     raise newException(ValueError, "Action cannot be empty.")
 
-  var payload = createCommonPayload(this)
+  var payload = createCommonPayload(this, "event")
 
   payload.add("&ec=" & encodeUrl(category))
   payload.add("&ea=" & encodeUrl(action))
@@ -79,10 +79,23 @@ proc reportException*(this: Analytics, description: string, isFatal=true) =
   ## To get this data in analytics, see:
   ## https://stackoverflow.com/a/21718577/492186
 
-  var payload = createCommonPayload(this)
+  var payload = createCommonPayload(this, "exception")
 
   payload.add("&exd=" & encodeUrl(description))
   payload.add("&exf=" & $(if isFatal: 1 else: 0))
+
+  discard this.client.postContent(collectUrl, body=payload)
+
+proc reportTiming*(this: Analytics, category, name: string, time: int,
+                   label: string = "") =
+  ## Reports timing information to analytics.
+  var payload = createCommonPayload(this, "timing")
+  
+  payload.add("&utc=" & encodeUrl(category))
+  payload.add("&utv=" & encodeUrl(name))
+  payload.add("&utt=" & $time)
+  if label.len > 0:
+    payload.add("&utl=" & encodeUrl(label))
 
   discard this.client.postContent(collectUrl, body=payload)
 
