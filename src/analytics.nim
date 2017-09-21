@@ -10,21 +10,21 @@ else:
 
 # Reference: https://goo.gl/BT32cg
 type
-  Analytics* = ref object
-    client: HttpClient
+  AnalyticsRef*[T] = ref object
+    client: T
     tid: string ## Tracking ID
     cid: string ## Client ID
     an: string ## Application name
     av: string ## Application version
 
+  Analytics* = AnalyticsRef[HttpClient]
+  AsyncAnalytics* = AnalyticsRef[AsyncHttpClient]
+
 const
   collectUrl = "https://www.google-analytics.com/collect"
 
-proc newAnalytics*(trackingID, clientID, appName, appVer: string,
-                   userAgent = ""): Analytics =
-  ## Creates a new analytics reporting object.
-  ##
-  ## When `userAgent` is empty, one is created based on the current OS info.
+proc newAnalyticsRef[T](trackingID, clientID, appName, appVer: string,
+                        userAgent = ""): AnalyticsRef[T] =
   var ua = userAgent
   if ua.len == 0:
     # We gather some OS stats here to include in the user agent.
@@ -37,15 +37,34 @@ proc newAnalytics*(trackingID, clientID, appName, appVer: string,
       appName, appVer, systemVersion, NimVersion
     ]
 
-  result = Analytics(
-    client: newHttpClient(userAgent = ua),
+  result = AnalyticsRef[T](
+    client:
+      when T is HttpClient: newHttpClient(userAgent = ua)
+      else: newAsyncHttpClient(userAgent = ua),
     tid: trackingID,
     cid: clientID,
     an: appName,
     av: appVer
   )
 
-proc createCommonPayload(this: Analytics, hitType: string): string =
+proc newAnalytics*(trackingID, clientID, appName, appVer: string,
+                   userAgent = ""): Analytics =
+  ## Creates a new analytics reporting object.
+  ##
+  ## When `userAgent` is empty, one is created based on the current OS info.
+  return newAnalyticsRef[HttpClient](trackingID, clientID, appName, appVer,
+                                     userAgent)
+
+proc newAsyncAnalytics*(trackingID, clientID, appName, appVer: string,
+                        userAgent = ""): AsyncAnalytics =
+  ## Creates a new async analytics reporting object.
+  ##
+  ## When `userAgent` is empty, one is created based on the current OS info.
+  return newAnalyticsRef[AsyncHttpClient](trackingID, clientID, appName, appVer,
+                                          userAgent)
+
+proc createCommonPayload(this: Analytics | AsyncAnalytics,
+                         hitType: string): string =
   var payload = "v=1&aip=1&t=" & hitType
   payload.add("&tid=" & encodeUrl(this.tid))
   payload.add("&cid=" & encodeUrl(this.cid))
@@ -53,8 +72,9 @@ proc createCommonPayload(this: Analytics, hitType: string): string =
   payload.add("&av=" & encodeUrl(this.av))
   return payload
 
-proc reportEvent*(this: Analytics, category, action, label: string = "",
-                  value: Option[int] = none(int)) =
+proc reportEvent*(this: Analytics | AsyncAnalytics, category, action,
+                  label: string = "",
+                  value: Option[int] = none(int)) {.multiSync.} =
 
   if category.len == 0:
     raise newException(ValueError, "Category cannot be empty.")
@@ -71,9 +91,10 @@ proc reportEvent*(this: Analytics, category, action, label: string = "",
   if value.isSome:
     payload.add("&ev=" & $value.get())
 
-  discard this.client.postContent(collectUrl, body=payload)
+  discard await this.client.postContent(collectUrl, body=payload)
 
-proc reportException*(this: Analytics, description: string, isFatal=true) =
+proc reportException*(this: Analytics | AsyncAnalytics,
+                      description: string, isFatal=true) {.multiSync.} =
   ## Reports an exception to analytics.
   ##
   ## To get this data in analytics, see:
@@ -84,10 +105,11 @@ proc reportException*(this: Analytics, description: string, isFatal=true) =
   payload.add("&exd=" & encodeUrl(description))
   payload.add("&exf=" & $(if isFatal: 1 else: 0))
 
-  discard this.client.postContent(collectUrl, body=payload)
+  discard await this.client.postContent(collectUrl, body=payload)
 
-proc reportTiming*(this: Analytics, category, name: string, time: int,
-                   label: string = "") =
+proc reportTiming*(this: Analytics | AsyncAnalytics, category,
+                   name: string, time: int,
+                   label: string = "") {.multiSync.} =
   ## Reports timing information to analytics.
   ##
   ## The `time` is specified in miliseconds.
@@ -95,14 +117,14 @@ proc reportTiming*(this: Analytics, category, name: string, time: int,
   ## To get the raw user timings data, see:
   ## https://stackoverflow.com/a/37464695/492186
   var payload = createCommonPayload(this, "timing")
-  
+
   payload.add("&utc=" & encodeUrl(category))
   payload.add("&utv=" & encodeUrl(name))
   payload.add("&utt=" & $time)
   if label.len > 0:
     payload.add("&utl=" & encodeUrl(label))
 
-  discard this.client.postContent(collectUrl, body=payload)
+  discard await this.client.postContent(collectUrl, body=payload)
 
 proc genClientID*(): string =
   return $genUUID()
