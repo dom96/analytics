@@ -89,6 +89,11 @@ proc reportException*(this: Analytics, description: string, isFatal=true) =
 proc reportTiming*(this: Analytics, category, name: string, time: int,
                    label: string = "") =
   ## Reports timing information to analytics.
+  ##
+  ## The `time` is specified in miliseconds.
+  ##
+  ## To get the raw user timings data, see:
+  ## https://stackoverflow.com/a/37464695/492186
   var payload = createCommonPayload(this, "timing")
   
   payload.add("&utc=" & encodeUrl(category))
