@@ -24,7 +24,7 @@ const
   collectUrl = "https://www.google-analytics.com/collect"
 
 proc newAnalyticsRef[T](trackingID, clientID, appName, appVer: string,
-                        userAgent = ""): AnalyticsRef[T] =
+                        userAgent = "", proxy: Proxy = nil): AnalyticsRef[T] =
   var ua = userAgent
   if ua.len == 0:
     # We gather some OS stats here to include in the user agent.
@@ -39,8 +39,8 @@ proc newAnalyticsRef[T](trackingID, clientID, appName, appVer: string,
 
   result = AnalyticsRef[T](
     client:
-      when T is HttpClient: newHttpClient(userAgent = ua)
-      else: newAsyncHttpClient(userAgent = ua),
+      when T is HttpClient: newHttpClient(userAgent = ua, proxy = proxy)
+      else: newAsyncHttpClient(userAgent = ua, proxy = proxy),
     tid: trackingID,
     cid: clientID,
     an: appName,
@@ -48,20 +48,20 @@ proc newAnalyticsRef[T](trackingID, clientID, appName, appVer: string,
   )
 
 proc newAnalytics*(trackingID, clientID, appName, appVer: string,
-                   userAgent = ""): Analytics =
+                   userAgent = "", proxy: Proxy = nil): Analytics =
   ## Creates a new analytics reporting object.
   ##
   ## When `userAgent` is empty, one is created based on the current OS info.
   return newAnalyticsRef[HttpClient](trackingID, clientID, appName, appVer,
-                                     userAgent)
+                                     userAgent, proxy)
 
 proc newAsyncAnalytics*(trackingID, clientID, appName, appVer: string,
-                        userAgent = ""): AsyncAnalytics =
+                        userAgent = "", proxy: Proxy = nil): AsyncAnalytics =
   ## Creates a new async analytics reporting object.
   ##
   ## When `userAgent` is empty, one is created based on the current OS info.
   return newAnalyticsRef[AsyncHttpClient](trackingID, clientID, appName, appVer,
-                                          userAgent)
+                                          userAgent, proxy)
 
 proc createCommonPayload(this: Analytics | AsyncAnalytics,
                          hitType: string): string =
