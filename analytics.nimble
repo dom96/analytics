@@ -1,6 +1,6 @@
 # Package
 
-version       = "0.1.0"
+version       = "0.1.1"
 author        = "Dominik Picheta"
 description   = "Allows statistics to be sent to and recorded in Google Analytics."
 license       = "MIT"
