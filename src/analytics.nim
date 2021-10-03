@@ -7,6 +7,7 @@ when defined(windows):
   import osinfo/win
 else:
   import osinfo/posix
+import puppy
 
 # Reference: https://goo.gl/BT32cg
 type
@@ -19,6 +20,8 @@ type
 
   Analytics* = AnalyticsRef[HttpClient]
   AsyncAnalytics* = AnalyticsRef[AsyncHttpClient]
+  PuppyAnalytics* = AnalyticsRef[puppy.Request]
+  AllAnalytics* = Analytics | AsyncAnalytics | PuppyAnalytics
 
 const
   collectUrl = "https://www.google-analytics.com/collect"
@@ -40,6 +43,7 @@ proc newAnalyticsRef[T](trackingID, clientID, appName, appVer: string,
   result = AnalyticsRef[T](
     client:
       when T is HttpClient: newHttpClient(userAgent = ua, proxy = proxy)
+      elif T is puppy.Request: puppy.newRequest(collectUrl, "post",  @[Header(key: "User-Agent", value: ua)])
       else: newAsyncHttpClient(userAgent = ua, proxy = proxy),
     tid: trackingID,
     cid: clientID,
@@ -63,7 +67,19 @@ proc newAsyncAnalytics*(trackingID, clientID, appName, appVer: string,
   return newAnalyticsRef[AsyncHttpClient](trackingID, clientID, appName, appVer,
                                           userAgent, proxy)
 
-proc createCommonPayload(this: Analytics | AsyncAnalytics,
+proc newPuppyAnalytics*(trackingID, clientID, appName, appVer: string,
+                        userAgent = "", proxy: Proxy = nil,
+                        timeout=5.0): PuppyAnalytics =
+  ## Creates a new puppy analytics reporting object.
+  ##
+  ## When `userAgent` is empty, one is created based on the current OS info.
+  ##
+  ## The timeout is in seconds.
+  result = newAnalyticsRef[puppy.Request](trackingID, clientID, appName, appVer,
+                                          userAgent, proxy)
+  result.client.timeout = timeout
+
+proc createCommonPayload(this: AllAnalytics,
                          hitType: string): string =
   var payload = "v=1&aip=1&t=" & hitType
   payload.add("&tid=" & encodeUrl(this.tid))
@@ -72,10 +88,9 @@ proc createCommonPayload(this: Analytics | AsyncAnalytics,
   payload.add("&av=" & encodeUrl(this.av))
   return payload
 
-proc reportEvent*(this: Analytics | AsyncAnalytics, category, action,
-                  label: string = "",
-                  value: Option[int] = none(int)) {.multiSync.} =
-
+proc createEventPayload(this: AllAnalytics, category, action,
+  label: string, value: Option[int]
+): string =
   if category.len == 0:
     raise newException(ValueError, "Category cannot be empty.")
 
@@ -90,8 +105,30 @@ proc reportEvent*(this: Analytics | AsyncAnalytics, category, action,
     payload.add("&el=" & encodeUrl(label))
   if value.isSome:
     payload.add("&ev=" & $value.get())
+  return payload
 
+proc reportEvent*(this: Analytics | AsyncAnalytics, category, action,
+                  label: string = "",
+                  value: Option[int] = none(int)) {.multiSync.} =
+  let payload = createEventPayload(this, category, action, label, value)
   discard await this.client.postContent(collectUrl, body=payload)
+
+proc reportEvent*(this: PuppyAnalytics, category, action,
+                  label: string = "",
+                  value: Option[int] = none(int)) =
+  let payload = createEventPayload(this, category, action, label, value)
+  this.client.body = payload
+  if fetch(this.client).code != Http200.int:
+    raise newException(ValueError, "Got non-200 response from analytics endpoint.")
+
+proc createExceptionPayload(
+  this: AllAnalytics, description: string, isFatal: bool
+): string =
+  var payload = createCommonPayload(this, "exception")
+
+  payload.add("&exd=" & encodeUrl(description))
+  payload.add("&exf=" & $(if isFatal: 1 else: 0))
+  return payload
 
 proc reportException*(this: Analytics | AsyncAnalytics,
                       description: string, isFatal=true) {.multiSync.} =
@@ -99,13 +136,31 @@ proc reportException*(this: Analytics | AsyncAnalytics,
   ##
   ## To get this data in analytics, see:
   ## https://stackoverflow.com/a/21718577/492186
-
-  var payload = createCommonPayload(this, "exception")
-
-  payload.add("&exd=" & encodeUrl(description))
-  payload.add("&exf=" & $(if isFatal: 1 else: 0))
-
+  let payload = createExceptionPayload(this, description, isFatal)
   discard await this.client.postContent(collectUrl, body=payload)
+
+proc reportException*(this: PuppyAnalytics,
+                      description: string, isFatal=true) =
+  ## Reports an exception to analytics.
+  ##
+  ## To get this data in analytics, see:
+  ## https://stackoverflow.com/a/21718577/492186
+  let payload = createExceptionPayload(this, description, isFatal)
+  this.client.body = payload
+  if fetch(this.client).code != Http200.int:
+    raise newException(ValueError, "Got non-200 response from analytics endpoint.")
+
+proc createTimingPayload(
+  this: AllAnalytics, category, name: string, time: int, label: string = ""
+): string =
+  var payload = createCommonPayload(this, "timing")
+
+  payload.add("&utc=" & encodeUrl(category))
+  payload.add("&utv=" & encodeUrl(name))
+  payload.add("&utt=" & $time)
+  if label.len > 0:
+    payload.add("&utl=" & encodeUrl(label))
+  return payload
 
 proc reportTiming*(this: Analytics | AsyncAnalytics, category,
                    name: string, time: int,
@@ -116,15 +171,16 @@ proc reportTiming*(this: Analytics | AsyncAnalytics, category,
   ##
   ## To get the raw user timings data, see:
   ## https://stackoverflow.com/a/37464695/492186
-  var payload = createCommonPayload(this, "timing")
-
-  payload.add("&utc=" & encodeUrl(category))
-  payload.add("&utv=" & encodeUrl(name))
-  payload.add("&utt=" & $time)
-  if label.len > 0:
-    payload.add("&utl=" & encodeUrl(label))
-
+  let payload = createTimingPayload(this, category, name, time, label)
   discard await this.client.postContent(collectUrl, body=payload)
+
+proc reportTiming*(this: PuppyAnalytics, category,
+                   name: string, time: int,
+                   label: string = "") =
+  let payload = createTimingPayload(this, category, name, time, label)
+  this.client.body = payload
+  if fetch(this.client).code != Http200.int:
+    raise newException(ValueError, "Got non-200 response from analytics endpoint.")
 
 proc genClientID*(): string =
   return $genUUID()
